@@ -191,6 +191,9 @@ typedef struct rd_kafka_msgset_reader_s {
         int msetr_ctrl_cnt;             /**< Number of control messages
                                          *   or MessageSets received. */
 
+        int msetr_aborted_cnt; /**< Number of aborted MessageSets
+                                *   encountered. */
+
         const char *msetr_srcname;      /**< Optional message source string,
                                          *   used in debug logging to
                                          *   indicate messages were
@@ -986,6 +989,7 @@ rd_kafka_msgset_reader_msgs_v2 (rd_kafka_msgset_reader_t *msetr) {
                                    msetr->msetr_v2_hdr->PID);
                         rd_kafka_buf_skip(msetr->msetr_rkbuf, rd_slice_remains(
                                 &msetr->msetr_rkbuf->rkbuf_reader));
+                        msetr->msetr_aborted_cnt++;
                         return RD_KAFKA_RESP_ERR_NO_ERROR;
                 }
         }
@@ -1347,6 +1351,8 @@ rd_kafka_msgset_reader_run (rd_kafka_msgset_reader_t *msetr) {
                  * is probably not a size limit and nothing is done. */
                 if (msetr->msetr_ctrl_cnt > 0) {
                         /* Noop */
+                    if (err == RD_KAFKA_RESP_ERR__UNDERFLOW)
+                        err = RD_KAFKA_RESP_ERR_NO_ERROR;
 
                 } else  if (rktp->rktp_fetch_msg_max_bytes < (1 << 30)) {
                         rktp->rktp_fetch_msg_max_bytes *= 2;
@@ -1356,7 +1362,11 @@ rd_kafka_msgset_reader_run (rd_kafka_msgset_reader_t *msetr) {
                                    rktp->rktp_rkt->rkt_topic->str,
                                    rktp->rktp_partition,
                                    rktp->rktp_fetch_msg_max_bytes);
-                } else if (!err) {
+
+                    if (err == RD_KAFKA_RESP_ERR__UNDERFLOW)
+                        err = RD_KAFKA_RESP_ERR_NO_ERROR;
+
+                } else if (!err && msetr->msetr_aborted_cnt == 0) {
                         rd_kafka_consumer_err(
                                 &msetr->msetr_rkq,
                                 msetr->msetr_broker_id,
@@ -1368,6 +1378,10 @@ rd_kafka_msgset_reader_run (rd_kafka_msgset_reader_t *msetr) {
                                 "might be too large to fetch, try increasing "
                                 "receive.message.max.bytes",
                                 rktp->rktp_offsets.fetch_offset);
+                } else if (msetr->msetr_aborted_cnt > 0) {
+                    /* Noop */
+                    if (err == RD_KAFKA_RESP_ERR__UNDERFLOW)
+                        err = RD_KAFKA_RESP_ERR_NO_ERROR;
                 }
 
         } else {
